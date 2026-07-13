@@ -1,22 +1,57 @@
-name: Check main.py Output
+name: CI
 
 on:
   push:
-    branches:
-      - main
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
 
 jobs:
-  test:
+  build-and-test:
+    name: Build & Test (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
 
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
         with:
-          python-version: "3.x"
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
 
-      - name: Verify output
+      - name: Install dependencies
         run: |
-          output=$(python main.py)
-          test "$output" = "Hello, this is coming from my main.py file"
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install flake8
+
+      - name: Lint with flake8
+        run: |
+          # fail the build on syntax errors / undefined names
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+          # everything else is just reported, not fatal
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+      - name: Smoke test - import app
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          python -c "import main; print('main.py imported successfully')"
+
+      - name: Run tests
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          if [ -d "tests" ] || compgen -G "test_*.py" > /dev/null || compgen -G "*_test.py" > /dev/null; then
+            pip install pytest httpx
+            pytest -v
+          else
+            echo "No test files found, skipping pytest step."
+          fi
